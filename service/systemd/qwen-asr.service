@@ -1,0 +1,18 @@
+[Unit]
+Description=Qwen3-ASR local speech-to-text service (unix socket + OpenAI-compatible HTTP)
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/.local/share/pi-asr
+ExecStart=%h/.local/share/pi-asr/venv/bin/python %h/.local/share/pi-asr/qwen_asr_server.py --http 127.0.0.1:8178 --idle 0
+Environment=PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+Environment=QWEN_ASR_HEADROOM=1.2
+Restart=on-failure
+RestartSec=5
+# 显存/内存不设硬上限，避免 CUDA 被 OOM-kill；需要限流可打开下面两行
+# MemoryMax=6G
+# CPUWeight=50
+
+[Install]
+WantedBy=default.target

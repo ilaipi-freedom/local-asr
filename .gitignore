@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+run/
+*.sock
+*.sock.log
+*.lock
+*.pid
+*.bak
+*.bak-*
+/tmp/
