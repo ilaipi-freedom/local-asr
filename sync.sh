@@ -16,8 +16,9 @@ mkdir -p "$ASR" "$WHIS"
 # 运行时副本也回填到 skill/assets（保证 skill 自包含）
 mkdir -p "$REPO/skill/assets/pi-asr"
 cp -f "$REPO"/service/*.py "$REPO/skill/assets/pi-asr/"
-[ -f "$ASR/README.md" ] && cp -f "$ASR/README.md" "$REPO/skill/assets/pi-asr/README.md"
+cp -f "$REPO/service/README.md" "$REPO/skill/assets/pi-asr/README.md"   # README 单一来源 = service/README.md
 cp -f "$REPO"/service/*.py "$ASR/"
+cp -f "$REPO/service/README.md" "$ASR/README.md"
 cp -f "$REPO"/service/whisper/transcribe.py "$WHIS/transcribe.py"
 chmod +x "$ASR"/*.py "$WHIS"/*.py
 

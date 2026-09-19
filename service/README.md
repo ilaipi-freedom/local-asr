@@ -7,6 +7,56 @@
 | unix socket | `~/.local/share/pi-asr/run/qwen-asr.sock` | 本机快路径（一行一个 JSON），pi 客户端用 |
 | HTTP | `http://127.0.0.1:8178` | **OpenAI 兼容**，任何程序可用 |
 
+## 三种调用方式
+
+| 方式 | 命令 | 适合 |
+|---|---|---|
+| pi 内部（socket） | `transcribe_qwen.py --file a.ogg --lang zh` | Telegram 语音，1~3s |
+| HTTP | `curl -F file=@a.ogg http://127.0.0.1:8178/v1/audio/transcriptions` | 其它程序/脚本/App |
+| 进程内 | `transcribe_qwen.py --no-server ...` | 调试，或不想常驻 |
+
+## 接线到 pi-telegram
+
+`~/.pi/agent/telegram.json` 顶层 `inboundHandlers`，**顺序即优先级**（Qwen 主、whisper 兜底）：
+
+```json
+[
+  {"label":"qwen3-asr-1.7b","type":"voice","template":["…/pi-asr/venv/bin/python","…/transcribe_qwen.py","--file","{file}","--lang","{lang=zh}"],"timeout":300000},
+  {"label":"local-whisper-fallback","type":"voice","template":["…/pi-whisper/venv/bin/python","…/transcribe.py","--file","{file}","--lang","{lang=zh}"],"timeout":300000},
+  … audio/* 同上两条 …
+]
+```
+
+> ⚠️ 配置在 **pi 启动时**读取 —— 改完必须重启 pi 才生效。
+
+## 热词（领域词表）
+
+Qwen3-ASR 支持 `prompt=` 传上下文，默认词表：
+
+> ROI、竖直方向、水平方向、开口、开口左边线、拟合圆、圆心、外圆、内圆、六块、描边、夹角、工位、偏移、治具、产品、膜、焊线、像素、亚像素、Cobetter
+
+改法：改 `transcribe_qwen.py` 的 `DEFAULT_PROMPT`，或设 `QWEN_ASR_PROMPT`（systemd unit 的 `Environment=`），改完 `systemctl --user restart qwen-asr`。
+
+## 对比工具
+
+```bash
+# 同一段音频跑 whisper + Qwen（可多个）并排对比
+venv/bin/python compare_asr.py <音频> zh
+# 只比 1.7B
+QWEN_MODELS="Qwen/Qwen3-ASR-1.7B-hf" venv/bin/python compare_asr.py <音频> zh
+```
+
+## 实测（RTX 3060 Ti 8GB，2026-09-19）
+
+| 场景 | 耗时 |
+|---|---|
+| 冷启动（加载模型） | ~15s |
+| 热调用（19.7s 音频，8bit） | 1.3~2.4s |
+| 热调用（bf16） | 0.4~0.7s |
+| 兜底 whisper-small（CPU） | ~3s |
+| 进程内加载（无服务） | 12~17s |
+
+
 ## 文件
 
 | 文件 | 说明 |
