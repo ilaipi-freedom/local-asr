@@ -18,8 +18,8 @@ import sys
 import tempfile
 import time
 
-WHISPER_PY = os.environ.get("WHISPER_PY", "/home/billy/.local/share/pi-whisper/venv/bin/python")
-WHISPER_SCRIPT = os.environ.get("WHISPER_SCRIPT", "/home/billy/.local/share/pi-whisper/transcribe.py")
+WHISPER_PY = os.environ.get("WHISPER_PY", os.path.expanduser("~/.local/share/pi-whisper/venv/bin/python"))
+WHISPER_SCRIPT = os.environ.get("WHISPER_SCRIPT", os.path.expanduser("~/.local/share/pi-whisper/transcribe.py"))
 WHISPER_MODEL = os.environ.get("WHISPER_MODEL", "small")
 QWEN_MODELS = os.environ.get("QWEN_MODELS", "Qwen/Qwen3-ASR-0.6B-hf,Qwen/Qwen3-ASR-1.7B-hf").split(",")
 QWEN_DEVICE = os.environ.get("QWEN_DEVICE", "auto")

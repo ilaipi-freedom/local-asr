@@ -68,6 +68,15 @@ LocalASR/
 模型选型与精度对比见 [skill/references/models.md](skill/references/models.md)，
 排障见 [skill/references/troubleshooting.md](skill/references/troubleshooting.md)。
 
+## 许可与第三方
+
+- 本项目（脚本/文档/skill）：**MIT**，见 [LICENSE](LICENSE)
+- 依赖的模型与库各自许可：
+  - [Qwen3-ASR](https://huggingface.co/Qwen/Qwen3-ASR-1.7B-hf) — Apache-2.0
+  - [faster-whisper](https://github.com/SYSTRAN/faster-whisper) / [Whisper](https://github.com/openai/whisper) — MIT
+  - PyTorch / Transformers — BSD-3 / Apache-2.0
+- 模型权重**不随仓库分发**（首次运行自动下载到 `~/.cache/huggingface`）
+
 ## 远程
 
-`git@git.infra.jwvis.com:<org>/LocalASR.git`（尚未添加，需要时 `git remote add origin ...` 再 push）
+计划发布到 GitHub（个人项目）：`git@github.com:<account>/LocalASR.git`
