@@ -30,10 +30,11 @@ echo "== 3/4 部署 skill → $SKILL"
 if [ "$LINK" = 1 ]; then
   rm -rf "$SKILL"; ln -s "$REPO/skill" "$SKILL"; echo "   （软链模式：编辑仓库即时生效）"
 else
-  mkdir -p "$SKILL"
+  rm -rf "$SKILL"                      # 干净镜像，避免残留旧文件
+  mkdir -p "$SKILL/scripts" "$SKILL/references" "$SKILL/assets/pi-asr"
   cp -f "$REPO/skill/SKILL.md" "$SKILL/"
-  cp -f "$REPO"/skill/scripts/*.sh "$SKILL/scripts/" 2>/dev/null || { mkdir -p "$SKILL/scripts"; cp -f "$REPO"/skill/scripts/*.sh "$SKILL/scripts/"; }
-  mkdir -p "$SKILL/references" "$SKILL/assets/pi-asr"
+  [ -f "$REPO/skill/README.md" ] && cp -f "$REPO/skill/README.md" "$SKILL/"
+  cp -f "$REPO"/skill/scripts/*.sh "$SKILL/scripts/"
   cp -f "$REPO"/skill/references/*.md "$SKILL/references/"
   cp -f "$REPO"/skill/assets/pi-asr/* "$SKILL/assets/pi-asr/"
   chmod +x "$SKILL"/scripts/*.sh
