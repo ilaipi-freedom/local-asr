@@ -1,15 +1,17 @@
 #!/usr/bin/env bash
 # 安装/修复本地 ASR 服务（幂等）。Linux + systemd --user。
-# 用法: install.sh [--no-telegram] [--no-whisper] [--no-service]
+# 用法: install.sh [--no-telegram] [--no-whisper] [--no-service] [--autostart]
+#   默认：服务按需启动（开机不自启，空闲 1800s 自动退出）
+#   --autostart：额外开机自启（建议同时把 unit 里 --idle 1800 改成 --idle 0）
 set -uo pipefail
 SVC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ASR_DIR="$HOME/.local/share/pi-asr"
 W_DIR="$HOME/.local/share/pi-whisper"
 MODEL="${QWEN_ASR_MODEL:-Qwen/Qwen3-ASR-1.7B-hf}"
 TG="$HOME/.pi/agent/telegram.json"
-DO_TG=1; DO_W=1; DO_SVC=1
+DO_TG=1; DO_W=1; DO_SVC=1; AUTOSTART=0
 for a in "$@"; do case "$a" in
-  --no-telegram) DO_TG=0;; --no-whisper) DO_W=0;; --no-service) DO_SVC=0;; esac; done
+  --no-telegram) DO_TG=0;; --no-whisper) DO_W=0;; --no-service) DO_SVC=0;; --autostart) AUTOSTART=1;; esac; done
 step(){ printf '\n\033[36m== %s\033[0m\n' "$1"; }
 die(){ printf '\033[31m%s\033[0m\n' "$1" >&2; exit 1; }
 
@@ -43,10 +45,20 @@ if [ "$DO_SVC" = 1 ]; then
   mkdir -p "$HOME/.config/systemd/user"
   cp -f "$SVC_DIR/systemd/qwen-asr.service" "$HOME/.config/systemd/user/"
   systemctl --user daemon-reload
-  systemctl --user enable qwen-asr >/dev/null 2>&1
+  if [ "$AUTOSTART" = 1 ]; then
+    systemctl --user enable qwen-asr >/dev/null 2>&1
+  else
+    systemctl --user disable qwen-asr >/dev/null 2>&1
+  fi
   systemctl --user restart qwen-asr 2>/dev/null || systemctl --user start qwen-asr
   sleep 2
   echo "  服务: $(systemctl --user is-active qwen-asr) / 自启: $(systemctl --user is-enabled qwen-asr)"
+  if [ "$AUTOSTART" = 1 ]; then
+    echo "  开机自启已开（常驻会占 ~4GB 显存）"
+  else
+    echo "  按需模式：开机不自启、空闲 1800s 自动退出；调用前 scripts/service.sh ensure（转写入口已内置）"
+    echo "  现在停掉验证：$(dirname "$SVC_DIR")/skill/scripts/service.sh stop"
+  fi
 else
   echo "  跳过（--no-service）"
 fi

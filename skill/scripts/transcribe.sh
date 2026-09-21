@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# 转写一个音频文件（优先走常驻服务的 unix socket，自动拉起；失败落 whisper）
+# 转写一个音频文件（按需服务：没起就自动拉起 → HTTP/socket → 失败落 whisper）
 # 用法: transcribe.sh <音频> [语言=zh] [--inproc] [--http] [--whisper]
 set -uo pipefail
+SDIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ASR_DIR="$HOME/.local/share/pi-asr"
 PY="$ASR_DIR/venv/bin/python"
 CLI="$ASR_DIR/transcribe_qwen.py"
@@ -24,6 +25,11 @@ done
 
 if [ "$mode" = "whisper" ]; then
   exec "$WPY" "$WCLI" --file "$f" --lang "$lang"
+fi
+
+# --http 显式要求走 HTTP：先确保服务在跑（systemd 按需拉起）
+if [ "$mode" = "http" ] && ! curl -s -m 2 "$HTTP/health" >/dev/null 2>&1; then
+  [ -x "$SDIR/service.sh" ] && "$SDIR/service.sh" ensure >&2 || true
 fi
 
 if [ "$mode" = "http" ] || { [ "$mode" = "auto" ] && curl -s -m 2 "$HTTP/health" >/dev/null 2>&1; }; then

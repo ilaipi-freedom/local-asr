@@ -13,11 +13,26 @@
 
 ## 2. 第一条语音很慢（~15s），后面很快
 
-正常：冷启动要加载 4GB 权重。想一直快 → 让服务常驻：
+**正常，这是按需模式的设计**：服务默认不在跑（开机不自启、空闲 30 分钟自动退出），
+第一条会按需拉起并加载 4GB 权重（~10–16s），之后热调用 1~3s。
+
+想彻底避免冷启动 → 让服务常驻（代价：常占 ~4GB 显存）：
 
 ```bash
-systemctl --user enable --now qwen-asr
+systemctl --user start qwen-asr                 # 本次开机内常驻（临时）
+systemctl --user enable --now qwen-asr          # 开机也自启（配合 --idle 0 才不空闲退出）
 ```
+
+## 2b. 服务没在跑 / 不知道有没有跑
+
+```bash
+scripts/service.sh status     # unit / socket / HTTP / 显存
+scripts/service.sh ensure     # 没跑就拉起来并等就绪（幂等）
+scripts/service.sh stop       # 停掉并释放显存
+```
+
+按需模式下 `is-active=inactive` 是**正常状态**，不是故障。若 `is-active=active` 但 `ping` 不通，
+看 `journalctl --user -u qwen-asr -n 50`。
 
 ## 3. 热调用也很慢（~16s）
 
@@ -31,17 +46,21 @@ systemctl --user enable --now qwen-asr
 
 显存被占满（常见于服务 + 进程内兜底同时要显存）。
 **这是设计内行为**：客户端会退到 CPU，最坏情况落 whisper handler，不会丢消息。
-彻底解决：`systemctl --user stop qwen-asr` 后再做进程内调用，或降低 `QWEN_ASR_HEADROOM`。
+彻底解决：`scripts/service.sh stop`（按需模式下默认就不在跑），或降低 `QWEN_ASR_HEADROOM`。
 
 ## 5. 服务起不来 / 起来就退
 
 ```bash
+scripts/service.sh status
 journalctl --user -u qwen-asr -n 80 --no-pager
 tail -50 ~/.local/share/pi-asr/run/qwen-asr.sock.log
 ```
 
 常见原因：模型没下完（`hf download Qwen/Qwen3-ASR-1.7B-hf`）、venv 缺依赖（`scripts/install.sh`）、
-`socket 文件残留`（客户端会自动清理）。
+`socket 文件残留`（客户端会自动清理）、unit 被改坏（`systemctl --user cat qwen-asr` 对照 `scripts/install.sh` 里的模板）。
+
+> 若 `is-active=active` 但 `systemctl is-enabled=disabled` —— 正常，按需模式就是手拉起来的。
+> 若 `is-active=inactive` 但进程还在跑 —— 是客户端直接拉起的游离实例，`scripts/service.sh restart` 交给 systemd 接管。
 
 ## 6. 术语识别不准
 
@@ -53,7 +72,8 @@ tail -50 ~/.local/share/pi-asr/run/qwen-asr.sock.log
 结果把自己杀掉、命令链静默中断。安全做法：
 
 ```bash
-systemctl --user stop qwen-asr          # 推荐
+scripts/service.sh stop                 # 推荐（systemd + 游离进程都清，并释放显存）
+systemctl --user stop qwen-asr          # 只管 systemd 拉起的实例
 kill "$(cat ~/.local/share/pi-asr/run/server.pid)"   # 有 PID 文件时
 pkill -f 'qwen_asr_ser''ver.py'         # 万不得已：把字符串拆开，避免自匹配
 ```
@@ -63,7 +83,8 @@ pkill -f 'qwen_asr_ser''ver.py'         # 万不得已：把字符串拆开，�
 ```bash
 ss -lntp | grep 8178
 systemctl --user edit qwen-asr   # 改 ExecStart 的 --http 地址
-systemctl --user restart qwen-asr
+systemctl --user daemon-reload   # 改 unit 后必须 reload
+scripts/service.sh restart       # 下次调用也会自动带上新配置
 ```
 
 ## 9. 想让别的机器/手机用
@@ -72,5 +93,7 @@ systemctl --user restart qwen-asr
 
 ```bash
 systemctl --user edit qwen-asr   # ExecStart 加 --http 0.0.0.0:8178 --token <随机串>
+systemctl --user daemon-reload
+scripts/service.sh restart
 curl -H "Authorization: Bearer <随机串>" -F "file=@a.ogg" http://<本机IP>:8178/v1/audio/transcriptions
 ```

@@ -9,6 +9,7 @@
 | 支持 | 30 语言 + 22 种中文方言、语言识别、中英混说 |
 | 量化 | bf16(4.0GB) / 8bit(2.4GB，默认) / CPU，自动降级 |
 | 接口 | unix socket（pi 内部）+ HTTP `127.0.0.1:8178`（OpenAI 兼容） |
+| 启动方式 | **按需**：开机不自启，首次调用自动拉起（冷启动 ~10–16s），空闲 1800s 自动退出释放显存 |
 
 ## 2024-2026 中文 ASR 公开基准（CER，越低越好）
 
@@ -41,14 +42,15 @@ Qwen3-ASR 支持 `prompt=` 传上下文，当前词表：
 
 > ROI、竖直方向、水平方向、开口、开口左边线、拟合圆、圆心、外圆、内圆、六块、描边、夹角、工位、偏移、治具、产品、膜、焊线、像素、亚像素、Cobetter
 
-加词方法：改 `~/.local/share/pi-asr/transcribe_qwen.py` 的 `DEFAULT_PROMPT`，或设环境变量 `QWEN_ASR_PROMPT`（systemd unit 的 `Environment=`），改完 `systemctl --user restart qwen-asr`。
+加词方法：改 `~/.local/share/pi-asr/transcribe_qwen.py` 的 `DEFAULT_PROMPT`，或设环境变量 `QWEN_ASR_PROMPT`（systemd unit 的 `Environment=`），改完 `scripts/service.sh restart`（未在跑则下次调用自动生效）。
 
 ## 换模型
 
 ```bash
 # 例：换 0.6B（不推荐）或换成别的 HF 仓库
-sudo -u "$USER" systemctl --user edit qwen-asr   # 加 Environment=QWEN_ASR_MODEL=...
-systemctl --user restart qwen-asr
+systemctl --user edit qwen-asr            # 加 Environment=QWEN_ASR_MODEL=...
+systemctl --user daemon-reload
+scripts/service.sh restart                # 或直接等下次调用自动拉起
 ```
 
 ## Mac（Apple Silicon）路径

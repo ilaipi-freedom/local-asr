@@ -4,20 +4,32 @@
 
 | 子目录 | 是什么 | 给谁用 |
 |---|---|---|
-| [`service/`](service/) | 常驻服务：**Qwen3-ASR-1.7B**（主）+ **faster-whisper**（兜底）。同时提供 unix socket 与 OpenAI 兼容 HTTP | 任何程序：pi / curl / 脚本 / 第三方 App |
-| [`skill/`](skill/) | pi skill：使用说明 + 自检/转写/对比脚本（**不承载模型**） | pi agent（知识层） |
+| [`service/`](service/) | 服务：**Qwen3-ASR-1.7B**（主）+ **faster-whisper**（兜底）。同时提供 unix socket 与 OpenAI 兼容 HTTP。**按需启动**：开机不自启，空闲 30 分钟自动退出 | 任何程序：pi / curl / 脚本 / 第三方 App |
+| [`skill/`](skill/) | pi skill：使用说明 + 自检/转写/服务启停/对比脚本（**不承载模型**） | pi agent（知识层） |
+
+## 运行模式（按需，省显存）
+
+服务**开机不自启**（`disabled`），空闲 **1800s** 自动退出并释放显存；第一次调用时自动拉起（冷启动 ~10–16s）。
+
+```bash
+~/.agents/skills/local-asr/scripts/service.sh ensure   # 没跑就拉起并等就绪（幂等，直接 curl 前先跑）
+~/.agents/skills/local-asr/scripts/service.sh stop     # 停掉并释放显存
+~/.agents/skills/local-asr/scripts/service.sh status   # unit / socket / HTTP / 显存
+```
+
+转写入口（`transcribe.sh` / telegram handler）已内置自动拉起；想恢复常驻见 [service/README.md](service/README.md)。
 
 ## 架构（三层，别混职责）
 
 ```
-能力层   systemd --user 服务 qwen-asr            ← 独立进程，与 pi 无关，开机常驻
+能力层   systemd --user 服务 qwen-asr            ← 独立进程，与 pi 无关，按需启停
          service/qwen_asr_server.py
-           ├─ unix socket  ~/.local/share/pi-asr/run/qwen-asr.sock   ← pi 内部快路径（1~3s）
+           ├─ unix socket  ~/.local/share/pi-asr/run/qwen-asr.sock   ← pi 内部快路径（热 1~3s）
            └─ HTTP         http://127.0.0.1:8178                     ← OpenAI 兼容，任何程序
 自动化层 pi-telegram handler（telegram.json 的 inboundHandlers）
-           发语音 → 自动转文字进 prompt（失败自动落 whisper，不丢消息）
+           发语音 → 自动转文字进 prompt（服务没跑会自动拉起；失败落 whisper，不丢消息）
 知识层   skill/local-asr → 安装到 ~/.agents/skills/local-asr
-           自检 / 转写 / A-B 对比 / 排障手册
+           自检 / 转写 / 服务启停 / A-B 对比 / 排障手册
 ```
 
 **关键约定**：skill 只做"说明书 + 工具箱"，通过**接口**调用服务，不内嵌模型、不负责自动转写。
@@ -33,6 +45,7 @@
 ```
 
 换新机器：`service/install.sh`（装运行时 + systemd）或直接 `skill/scripts/install.sh`（skill 自带运行时副本，自包含）。
+两者默认都**不开机自启**（按需模式）；要开机常驻加 `--autostart` 并把 unit 的 `--idle 1800` 改成 `--idle 0`。
 
 ## 接口速查
 
@@ -41,8 +54,9 @@
 curl -F "file=@a.ogg" -F "language=zh" http://127.0.0.1:8178/v1/audio/transcriptions
 curl -s http://127.0.0.1:8178/health          # {"ok":true,"dev":"cuda","quant":"8bit",...}
 
-# 服务管理
-systemctl --user status|restart|stop qwen-asr
+# 服务管理（按需模式）
+~/.agents/skills/local-asr/scripts/service.sh ensure|stop|status
+systemctl --user status|start|stop qwen-asr
 journalctl --user -u qwen-asr -n 50
 ```
 
@@ -60,10 +74,11 @@ LocalASR/
 
 | 场景 | 耗时 |
 |---|---|
-| 冷启动（加载模型） | ~15s |
+| 冷启动（按需拉起，加载模型） | ~10–16s |
 | 热调用（19.7s 音频，8bit） | 1.3~2.4s |
 | 热调用（bf16） | 0.4~0.7s |
 | 兜底 whisper-small（CPU） | ~3s |
+| 空闲退出 | 1800s 无请求后自动退出，显存归零 |
 
 模型选型与精度对比见 [skill/references/models.md](skill/references/models.md)，
 排障见 [skill/references/troubleshooting.md](skill/references/troubleshooting.md)。

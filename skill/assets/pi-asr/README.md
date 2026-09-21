@@ -1,6 +1,8 @@
 # service —— 本地语音识别服务
 
-常驻进程，加载一次模型，对外提供两种入口。**与 pi 无关**，可独立运行、独立被调用。
+服务进程，模型只加载一次（加载后热调用 1~3s），对外提供两种入口。**与 pi 无关**，可独立运行、独立被调用。
+
+**按需启动**：开机不自启，空闲 1800s 自动退出（释放显存）；调用方会自动拉起，也可手动 `service.sh ensure`。
 
 | 入口 | 地址 | 用途 |
 |---|---|---|
@@ -14,6 +16,9 @@
 | pi 内部（socket） | `transcribe_qwen.py --file a.ogg --lang zh` | Telegram 语音，1~3s |
 | HTTP | `curl -F file=@a.ogg http://127.0.0.1:8178/v1/audio/transcriptions` | 其它程序/脚本/App |
 | 进程内 | `transcribe_qwen.py --no-server ...` | 调试，或不想常驻 |
+
+> 服务**按需启动**：默认不开机自启、空闲 1800s 自动退出（释放显存）。
+> 前两种方式会自动拉起服务（systemctl 优先，冷启动 ~10-16s）；直接 curl 前先 `../skill/scripts/service.sh ensure`。
 
 ## 接线到 pi-telegram
 
@@ -50,11 +55,12 @@ QWEN_MODELS="Qwen/Qwen3-ASR-1.7B-hf" venv/bin/python compare_asr.py <音频> zh
 
 | 场景 | 耗时 |
 |---|---|
-| 冷启动（加载模型） | ~15s |
+| 冷启动（按需拉起，加载模型） | ~10–16s |
 | 热调用（19.7s 音频，8bit） | 1.3~2.4s |
 | 热调用（bf16） | 0.4~0.7s |
 | 兜底 whisper-small（CPU） | ~3s |
 | 进程内加载（无服务） | 12~17s |
+| 空闲退出 | 1800s 无请求后自动退出，显存归零 |
 
 
 ## 文件
@@ -65,8 +71,8 @@ QWEN_MODELS="Qwen/Qwen3-ASR-1.7B-hf" venv/bin/python compare_asr.py <音频> zh
 | `transcribe_qwen.py` | 客户端 CLI：优先 socket，连不上自动拉起服务，失败退进程内 |
 | `compare_asr.py` | 同音频多模型 A/B 对比工具 |
 | `whisper/transcribe.py` | faster-whisper 兜底转写（纯 CPU，秒级） |
-| `systemd/qwen-asr.service` | systemd 用户服务单元 |
-| `install.sh` | 一键安装/修复（幂等） |
+| `systemd/qwen-asr.service` | systemd 用户服务单元（按需启动，`--idle 1800`） |
+| `install.sh` | 一键安装/修复（幂等；默认不开机自启，`--autostart` 才开） |
 
 ## 安装
 
@@ -82,6 +88,18 @@ QWEN_MODELS="Qwen/Qwen3-ASR-1.7B-hf" venv/bin/python compare_asr.py <音频> zh
 systemctl --user status qwen-asr
 curl -s http://127.0.0.1:8178/health
 ```
+
+### 运行模式（默认按需）
+
+安装后服务**开机不自启**，空闲 1800s 自动退出——需要时自动拉起（systemctl 优先）：
+
+```bash
+../skill/scripts/service.sh ensure    # 或任意一次 transcribe.sh / 发语音
+../skill/scripts/service.sh stop      # 释放显存
+```
+
+想恢复开机常驻：`systemctl --user edit qwen-asr` 把 `--idle 1800` 改成 `--idle 0`，
+再 `systemctl --user enable --now qwen-asr`；安装时也可直接 `./install.sh --autostart`。
 
 ## HTTP API
 
@@ -126,7 +144,9 @@ print(c.audio.transcriptions.create(model="qwen3-asr-1.7b", file=open("a.ogg","r
 | `QWEN_ASR_HEADROOM` | `1.2` | 服务必须留出的显存余量(GB)，设 0 可吃满 |
 | `QWEN_ASR_HTTP` | 空(关) | HTTP 监听地址，如 `127.0.0.1:8178` |
 | `QWEN_ASR_TOKEN` | 空 | HTTP Bearer token（对局域网暴露时必设） |
-| `QWEN_ASR_IDLE` | `1800` | 空闲退出秒数（`0`=永不退出，systemd 下用） |
+| `QWEN_ASR_IDLE` | `1800` | 空闲退出秒数（`0`=永不退出）；unit 里用 `--idle` 指定 |
+| `QWEN_ASR_SYSTEMD` | `1` | 客户端拉起服务时是否优先用 `systemctl --user start`（`0`=直接 Popen） |
+| `QWEN_ASR_UNIT` | `qwen-asr.service` | systemd unit 名 |
 | `QWEN_ASR_SERVER` | `1` | 客户端是否用常驻服务（`0`=进程内） |
 | `QWEN_ASR_SOCK` | `~/.local/share/pi-asr/run/qwen-asr.sock` | socket 路径 |
 

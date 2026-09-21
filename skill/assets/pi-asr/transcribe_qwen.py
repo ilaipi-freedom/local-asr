@@ -12,6 +12,8 @@
   QWEN_ASR_SERVER  1/0    是否使用常驻服务（默认 1）
   QWEN_ASR_SOCK    路径   socket 路径（默认 ~/.local/share/pi-asr/run/qwen-asr.sock）
   QWEN_ASR_STARTUP 秒     首次拉起服务的等待上限（默认 150）
+  QWEN_ASR_SYSTEMD 1/0    服务未跑时是否优先用 systemctl 拉起（默认 1；0=直接 Popen）
+  QWEN_ASR_UNIT    名称   systemd unit 名（默认 qwen-asr.service）
   QWEN_ASR_IDLE    秒     服务空闲退出时间（默认 1800）
   QWEN_ASR_MODEL / QWEN_ASR_PROMPT / QWEN_ASR_LANG / QWEN_ASR_DEVICE / QWEN_ASR_MAXTOK
 """
@@ -22,6 +24,7 @@ os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 import fcntl  # noqa: E402
 import json  # noqa: E402
 import re  # noqa: E402
+import shutil  # noqa: E402
 import socket  # noqa: E402
 import subprocess  # noqa: E402
 import sys  # noqa: E402
@@ -109,7 +112,44 @@ def ping(sock_path: str) -> bool:
         return False
 
 
+SYSTEMD_UNIT = os.environ.get("QWEN_ASR_UNIT", "qwen-asr.service")
+
+
+def _systemd_start() -> bool:
+    """按需拉起：优先交给 systemd（进程受管理，可 systemctl stop 回收显存）。
+
+    服务开机不自启；没有 systemctl / 不在用户会话（缺 DBUS）/ unit 不存在 /
+    启动失败 → 返回 False，调用方退回直接 Popen（功能等价，只是不受 systemd 管理）。
+    """
+    if os.environ.get("QWEN_ASR_SYSTEMD", "1") == "0" or not shutil.which("systemctl"):
+        return False
+    try:
+        q = subprocess.run(["systemctl", "--user", "cat", SYSTEMD_UNIT],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10)
+        if q.returncode != 0:
+            return False
+        r = subprocess.run(["systemctl", "--user", "start", SYSTEMD_UNIT],
+                           stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=60)
+        if r.returncode != 0:
+            note("systemctl start 失败: %s" % r.stdout.decode("utf-8", "replace").strip()[:200])
+            return False
+        return True
+    except Exception as exc:
+        note("systemctl 不可用(%s) → 直接拉起" % str(exc)[:80])
+        return False
+
+
+def _unit_failed() -> bool:
+    try:
+        return subprocess.run(["systemctl", "--user", "is-failed", SYSTEMD_UNIT],
+                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                              timeout=10).returncode == 0
+    except Exception:
+        return False
+
+
 def ensure_server(sock_path: str, startup: float) -> bool:
+    """服务在跑就直接用；没跑就拉起来（systemd 优先，失败退回 Popen）。"""
     if ping(sock_path):
         return True
     os.makedirs(os.path.dirname(sock_path), exist_ok=True)
@@ -126,16 +166,26 @@ def ensure_server(sock_path: str, startup: float) -> bool:
                 os.unlink(sock_path)  # 清理残留 socket
             except OSError:
                 pass
-        logf = open(sock_path + ".log", "ab", buffering=0)
-        subprocess.Popen([sys.executable, SERVER, "--sock", sock_path],
-                         stdout=logf, stderr=logf, stdin=subprocess.DEVNULL,
-                         start_new_session=True, close_fds=True)
-        note("正在拉起常驻服务（首次需加载模型）...")
+        managed = _systemd_start()
+        if managed:
+            note("按需启动 systemd 服务 %s（首次需加载模型）..." % SYSTEMD_UNIT)
+        else:
+            logf = open(sock_path + ".log", "ab", buffering=0)
+            subprocess.Popen([sys.executable, SERVER, "--sock", sock_path],
+                             stdout=logf, stderr=logf, stdin=subprocess.DEVNULL,
+                             start_new_session=True, close_fds=True)
+            note("正在拉起常驻服务（首次需加载模型）...")
         t0 = time.time()
+        next_check = t0 + 8.0
         while time.time() - t0 < startup:
             if ping(sock_path):
                 note("常驻服务就绪（%.1fs）" % (time.time() - t0))
                 return True
+            if managed and time.time() >= next_check:
+                if _unit_failed():
+                    note("systemd 服务启动失败（journalctl --user -u %s）" % SYSTEMD_UNIT)
+                    return False
+                next_check = time.time() + 8.0
             time.sleep(0.4)
     return False
 

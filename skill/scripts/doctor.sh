@@ -17,21 +17,42 @@ echo "[1] systemd 服务"
 if [ -f "$UNIT" ]; then p "unit 存在: $UNIT"; else x "unit 缺失: $UNIT（跑 scripts/install.sh）"; fi
 st=$(systemctl --user is-active qwen-asr 2>/dev/null || true)
 en=$(systemctl --user is-enabled qwen-asr 2>/dev/null || true)
-case "$st" in active) p "服务 active";; *) w "服务 $st（按需模式也正常，首用会慢 ~15s）";; esac
-case "$en" in enabled) p "开机自启已开";; *) w "未开机自启（systemctl --user enable --now qwen-asr）";; esac
+idle=$(grep -m1 '^ExecStart=' "$UNIT" 2>/dev/null | grep -o -- '--idle [0-9]*' | awk '{print $2}')
+case "$st" in
+  active) p "服务 active（按需模式：空闲 ${idle:-1800}s 后自动退出释放显存）";;
+  activating) w "服务 activating（正在加载模型）";;
+  *) p "服务 $st —— 按需模式（正常；首用自动拉起，冷启动 ~10-15s）";;
+esac
+case "$en" in
+  enabled) w "开机自启已开（会常驻占 ~4GB 显存）；不需要就 systemctl --user disable --now qwen-asr";;
+  *) p "开机不自启（按需模式）";;
+esac
+case "$st" in
+  active) ;;
+  *) if pgrep -f "qwen_asr_ser""ver.py" >/dev/null 2>&1; then
+       w "有服务进程但 systemd 显示 $st —— 可能是客户端直接拉起的游离实例；scripts/service.sh restart 接管"
+     fi;;
+esac
 
 echo "[2] 进程与接口"
-pgrep -f "qwen_asr_ser""ver.py" >/dev/null 2>&1 && p "服务进程在跑 (pid $(pgrep -f "qwen_asr_ser""ver.py" | head -1))" || w "服务进程未跑"
 sock="$ASR_DIR/run/qwen-asr.sock"
-[ -S "$sock" ] && p "unix socket 存在" || w "socket 不存在（未启动或已空闲退出）"
 h=$(curl -s -m 3 "$HTTP/health" 2>/dev/null || true)
-if [ -n "$h" ]; then
-  p "HTTP /health: $h"
-  q=$(printf '%s' "$h" | grep -o '"quant": *[^,}]*' | cut -d: -f2 | tr -d ' "')
-  d=$(printf '%s' "$h" | grep -o '"dev": *[^,}]*' | cut -d: -f2 | tr -d ' "')
-  [ "$d" = "cpu" ] && w "当前跑在 CPU（显存不足）→ 热调用约 16s" || p "设备=$d 量化=${q:-bf16}"
+pid=$(pgrep -f "qwen_asr_ser""ver.py" 2>/dev/null | head -1)
+if [ -n "$pid" ]; then
+  p "服务进程在跑 (pid $pid)"
+  [ -S "$sock" ] && p "unix socket 存在" || w "socket 不存在（进程在但 socket 未建，看 journalctl）"
+  if [ -n "$h" ]; then
+    p "HTTP /health: $h"
+    q=$(printf '%s' "$h" | grep -o '"quant": *[^,}]*' | cut -d: -f2 | tr -d ' "')
+    d=$(printf '%s' "$h" | grep -o '"dev": *[^,}]*' | cut -d: -f2 | tr -d ' "')
+    [ "$d" = "cpu" ] && w "当前跑在 CPU（显存不足）→ 热调用约 16s" || p "设备=$d 量化=${q:-bf16}"
+  else
+    w "HTTP 无响应（进程在但 HTTP 没起？确认 unit 的 --http 参数）"
+  fi
 else
-  w "HTTP 无响应（可能未开 HTTP 或服务未起）"
+  p "服务未启动 —— 按需模式（正常）；转写前会自动拉起，或 scripts/service.sh ensure"
+  [ -S "$sock" ] && w "socket 文件残留（服务没跑但 socket 在；客户端会自动清理）"
+  [ -n "$h" ] && w "HTTP 有响应但找不到服务进程（端口被占？ss -lntp | grep 8178）"
 fi
 
 echo "[3] 显存"

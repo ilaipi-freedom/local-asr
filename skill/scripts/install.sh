@@ -1,15 +1,17 @@
 #!/usr/bin/env bash
 # local-asr 一键安装/修复（幂等）。Linux + systemd --user。
-# 用法: install.sh [--no-telegram] [--no-whisper] [--no-service]
+# 用法: install.sh [--no-telegram] [--no-whisper] [--no-service] [--autostart]
+#   默认：服务按需启动（开机不自启，空闲 1800s 自动退出）
+#   --autostart：额外开机自启（建议同时把 unit 里 --idle 1800 改成 --idle 0）
 set -uo pipefail
 SKILL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ASR_DIR="$HOME/.local/share/pi-asr"
 W_DIR="$HOME/.local/share/pi-whisper"
 MODEL="${QWEN_ASR_MODEL:-Qwen/Qwen3-ASR-1.7B-hf}"
 TG="$HOME/.pi/agent/telegram.json"
-DO_TG=1; DO_W=1; DO_SVC=1
+DO_TG=1; DO_W=1; DO_SVC=1; AUTOSTART=0
 for a in "$@"; do case "$a" in
-  --no-telegram) DO_TG=0;; --no-whisper) DO_W=0;; --no-service) DO_SVC=0;; esac; done
+  --no-telegram) DO_TG=0;; --no-whisper) DO_W=0;; --no-service) DO_SVC=0;; --autostart) AUTOSTART=1;; esac; done
 step(){ printf '\n\033[36m== %s\033[0m\n' "$1"; }
 die(){ printf '\033[31m%s\033[0m\n' "$1" >&2; exit 1; }
 
@@ -47,15 +49,21 @@ step "4/6 下载模型 $MODEL"
 step "5/6 systemd 用户服务"
 if [ "$DO_SVC" = 1 ]; then
   mkdir -p "$HOME/.config/systemd/user"
-  cat > "$HOME/.config/systemd/user/qwen-asr.service" <<UNIT
+  # unit 单一来源：仓库 service/systemd/qwen-asr.service（assets 里也有副本）；都没有才用内置模板
+  if [ -f "$SRC/systemd/qwen-asr.service" ]; then
+    cp -f "$SRC/systemd/qwen-asr.service" "$HOME/.config/systemd/user/qwen-asr.service"
+  else
+    cat > "$HOME/.config/systemd/user/qwen-asr.service" <<UNIT
 [Unit]
-Description=Qwen3-ASR local speech-to-text service (unix socket + OpenAI-compatible HTTP)
+Description=Qwen3-ASR local speech-to-text service (unix socket + OpenAI-compatible HTTP, on-demand)
 After=network.target
 
 [Service]
 Type=simple
 WorkingDirectory=%h/.local/share/pi-asr
-ExecStart=%h/.local/share/pi-asr/venv/bin/python %h/.local/share/pi-asr/qwen_asr_server.py --http 127.0.0.1:8178 --idle 0
+# 按需启动（开机不自启）；空闲 1800s 自动退出并释放显存。
+# 想常驻可改 --idle 0，并 systemctl --user enable qwen-asr
+ExecStart=%h/.local/share/pi-asr/venv/bin/python %h/.local/share/pi-asr/qwen_asr_server.py --http 127.0.0.1:8178 --idle 1800
 Environment=PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 Environment=QWEN_ASR_HEADROOM=1.2
 Restart=on-failure
@@ -64,10 +72,21 @@ RestartSec=5
 [Install]
 WantedBy=default.target
 UNIT
+  fi
   systemctl --user daemon-reload
-  systemctl --user enable qwen-asr >/dev/null 2>&1
+  if [ "$AUTOSTART" = 1 ]; then
+    systemctl --user enable qwen-asr >/dev/null 2>&1
+  else
+    systemctl --user disable qwen-asr >/dev/null 2>&1
+  fi
   systemctl --user restart qwen-asr 2>/dev/null || systemctl --user start qwen-asr
   echo "服务: $(systemctl --user is-active qwen-asr) / 自启: $(systemctl --user is-enabled qwen-asr)"
+  if [ "$AUTOSTART" = 1 ]; then
+    echo "    开机自启已开（常驻会占 ~4GB 显存）"
+  else
+    echo "    按需模式：开机不自启、空闲 1800s 自动退出；调用前 scripts/service.sh ensure（转写入口已内置）"
+    echo "    现在停掉验证：scripts/service.sh stop"
+  fi
 else
   echo "跳过（--no-service）"
 fi

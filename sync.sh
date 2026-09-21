@@ -17,6 +17,8 @@ mkdir -p "$ASR" "$WHIS"
 mkdir -p "$REPO/skill/assets/pi-asr"
 cp -f "$REPO"/service/*.py "$REPO/skill/assets/pi-asr/"
 cp -f "$REPO/service/README.md" "$REPO/skill/assets/pi-asr/README.md"   # README 单一来源 = service/README.md
+mkdir -p "$REPO/skill/assets/pi-asr/systemd"
+cp -f "$REPO"/service/systemd/*.service "$REPO/skill/assets/pi-asr/systemd/"  # unit 单一来源 = service/systemd/
 cp -f "$REPO"/service/*.py "$ASR/"
 cp -f "$REPO/service/README.md" "$ASR/README.md"
 cp -f "$REPO"/service/whisper/transcribe.py "$WHIS/transcribe.py"
@@ -37,14 +39,18 @@ else
   [ -f "$REPO/skill/README.md" ] && cp -f "$REPO/skill/README.md" "$SKILL/"
   cp -f "$REPO"/skill/scripts/*.sh "$SKILL/scripts/"
   cp -f "$REPO"/skill/references/*.md "$SKILL/references/"
-  cp -f "$REPO"/skill/assets/pi-asr/* "$SKILL/assets/pi-asr/"
+  cp -rf "$REPO"/skill/assets/pi-asr/. "$SKILL/assets/pi-asr/"
   chmod +x "$SKILL"/scripts/*.sh
 fi
 
-echo "== 4/4 重启服务"
+echo "== 4/4 服务（按需模式：不主动常驻）"
 if [ "$RESTART" = 1 ]; then
-  systemctl --user restart qwen-asr && echo "   已重启"
+  if systemctl --user is-active --quiet qwen-asr; then
+    systemctl --user restart qwen-asr && echo "   已重启"
+  else
+    echo "   服务未在运行（按需模式，正常）→ 用 scripts/service.sh ensure，或下次调用时自动拉起"
+  fi
 else
-  echo "   （未重启；改了服务端代码用 --restart，或手动 systemctl --user restart qwen-asr）"
+  echo "   （未动服务；需要立即生效：$SKILL/scripts/service.sh restart）"
 fi
 echo "完成。自检: $SKILL/scripts/doctor.sh"
